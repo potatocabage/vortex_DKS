@@ -63,6 +63,11 @@ module VX_kmu import VX_gpu_pkg::*; (
         //     smem_size          <= '0;
         // end else if (dcr_wr_valid) begin
         if (dcr_wr_valid) begin
+            `TRACE(1,  ("%t: KMU: Writing dcr data: addr: %h, data: %h\n",
+               $time, dcr_wr_addr, dcr_wr_data))
+            `TRACE(1,  ("%t: KMU: Writing to kmu_data: PC: %h, grid_dim: %d, %d, %d, block_dim: %d, %d, %d, param: %h\n",
+               $time, kmu_data.pc, kmu_data.grid_dim[0], kmu_data.grid_dim[1], kmu_data.grid_dim[2],
+                kmu_data.block_dim[0], kmu_data.block_dim[1], kmu_data.block_dim[2], kmu_data.param))
             case(dcr_wr_addr)
                 // PC
                 `VX_DCR_BASE_STARTUP_ADDR0: kmu_data.pc <= dcr_wr_data;
@@ -87,6 +92,7 @@ module VX_kmu import VX_gpu_pkg::*; (
     // CTA distribution state machine
     always_ff @(posedge clk) begin
         if (reset) begin
+            `TRACE(1,  ("%t: KMU: Reset\n", $time))
             counter_x    <= 0;
             counter_y    <= 0;
             counter_z    <= 0;
@@ -96,10 +102,12 @@ module VX_kmu import VX_gpu_pkg::*; (
         end else begin
             // If all CTAs sent, keep valid low
             if (all_cta_sent) begin
+                `TRACE(1,  ("%t: KMU: All CTAs sent\n", $time))
                 kmu_bus_out[0].req_valid <= 0;
             end else begin
                 // If not currently valid, prepare next CTA
                 if (!kmu_bus_out[0].req_valid) begin
+                    `TRACE(1,  ("%t: KMU: Prepare next CTA\n", $time))
                     // Prepare and send one CTA block
                     kmu_bus_out[0].req_data.num_warps    <= total_warps;
                     kmu_bus_out[0].req_data.start_pc     <= kmu_data.pc;
@@ -113,6 +121,7 @@ module VX_kmu import VX_gpu_pkg::*; (
                 end
                 // Advance to next CTA block only after handshake
                 if (kmu_bus_out[0].req_valid && kmu_bus_out[0].req_ready) begin
+                    `TRACE(1,  ("%t: KMU: Advance to next CTA counters: (%d, %d, %d), counter_id: %d\n", $time, counter_x, counter_y, counter_z, counter_id))
                     // Advance counters
                     counter_z  <= counter_z + 1;
                     counter_id <= counter_id + 1;
