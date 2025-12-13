@@ -37,7 +37,11 @@ module VX_cluster import VX_gpu_pkg::*; #(
     output wire                 busy,
 
     // Distributed task
-    VX_kmu_bus_if.slave      task_in[1]
+    VX_kmu_bus_if.slave         task_in[1],
+
+    output kmu_data_t           dkl_cluster_level_entry_data,
+    output wire             dkl_cluster_level_entry_valid,
+    input wire              dkl_cluster_to_main_arb_ready
 );
 
     VX_kmu_bus_if task_out[NUM_SOCKETS]();
@@ -134,6 +138,9 @@ module VX_cluster import VX_gpu_pkg::*; #(
     ///////////////////////////////////////////////////////////////////////////
 
     wire [NUM_SOCKETS-1:0] per_socket_busy;
+    wire [NUM_SOCKETS-1:0] dkl_socket_level_entry_valid;
+    wire [NUM_SOCKETS-1:0] dkl_socket_to_cluster_arb_ready;
+    kmu_data_t [NUM_SOCKETS-1:0] dkl_socket_level_entry_data;
 
     // Generate all sockets
     for (genvar socket_id = 0; socket_id < NUM_SOCKETS; ++socket_id) begin : g_sockets
@@ -167,9 +174,29 @@ module VX_cluster import VX_gpu_pkg::*; #(
 
             .busy           (per_socket_busy[socket_id]),
 
-            .task_in        (task_out[socket_id +: 1])
+            .task_in        (task_out[socket_id +: 1]),
+            .dkl_socket_level_entry_data (dkl_socket_level_entry_data[socket_id]),
+            .dkl_socket_level_entry_valid (dkl_socket_level_entry_valid[socket_id]),
+            .dkl_socket_to_cluster_arb_ready (dkl_socket_to_cluster_arb_ready[socket_id])
         );
     end
+
+    /* verilator lint_off PINMISSING */
+    VX_stream_arb #(
+        .NUM_INPUTS (NUM_SOCKETS),
+        .NUM_OUTPUTS (1),
+        .DATAW ($bits(kmu_data_t))
+    ) dkl_socket_to_cluster_arb (
+        .clk (clk),
+        .reset (reset),
+        .valid_in (dkl_socket_level_entry_valid),
+        .data_in (dkl_socket_level_entry_data),
+        .ready_in (dkl_socket_to_cluster_arb_ready),
+        .valid_out (dkl_cluster_level_entry_valid),
+        .data_out (dkl_cluster_level_entry_data),
+        .ready_out (dkl_cluster_to_main_arb_ready)
+    );
+    /* verilator lint_on PINMISSING */
 
     `BUFFER_EX(busy, (| per_socket_busy), 1'b1, 1, (NUM_SOCKETS > 1));
 

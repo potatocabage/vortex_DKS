@@ -889,12 +889,22 @@ package VX_gpu_pkg;
         logic [`XLEN-1:0]   param;
     } kmu_data_t;
 
+    /////////////////////////////// Kernel Info for Dynamic Launch data type /////////////////////////////
+    typedef struct packed {
+        logic [`XLEN-1:0]   pc;
+        logic [2:0][31:0]   grid_dim;
+        logic [2:0][31:0]   block_dim;
+        logic [`XLEN-1:0]   param;
+        logic               ready;
+    } dl_data_t;
+
     /////////////////////////////// csr cta data type /////////////////////////////
     typedef struct packed {
         logic [31:0]    cta_x;
         logic [31:0]    cta_y;
         logic [31:0]    cta_z;
         logic [31:0]    cta_id;
+        logic [`XLEN-1:0] param;  // kernel boot argument (mscratch value for this warp)
     } csr_cta_data_t;
 
 endpackage

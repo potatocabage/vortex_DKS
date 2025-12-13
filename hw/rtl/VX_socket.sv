@@ -42,7 +42,10 @@ module VX_socket import VX_gpu_pkg::*; #(
     output wire             busy,
 
     // Distributed task
-    VX_kmu_bus_if.slave      task_in[1]
+    VX_kmu_bus_if.slave      task_in[1],
+    output kmu_data_t       dkl_socket_level_entry_data,
+    output wire             dkl_socket_level_entry_valid,
+    input wire              dkl_socket_to_cluster_arb_ready
 );
 
     VX_kmu_bus_if task_out[`SOCKET_SIZE]();
@@ -230,6 +233,9 @@ module VX_socket import VX_gpu_pkg::*; #(
     ///////////////////////////////////////////////////////////////////////////
 
     wire [`SOCKET_SIZE-1:0] per_core_busy;
+    wire [`SOCKET_SIZE-1:0] dkl_core_level_entry_valid;
+    wire [`SOCKET_SIZE-1:0] dkl_core_to_socket_arb_ready;
+    kmu_data_t [`SOCKET_SIZE-1:0] dkl_core_level_entry_data;
 
     // Generate all cores
     for (genvar core_id = 0; core_id < `SOCKET_SIZE; ++core_id) begin : g_cores
@@ -264,9 +270,30 @@ module VX_socket import VX_gpu_pkg::*; #(
 
             .busy           (per_core_busy[core_id]),
 
-            .task_in        (task_out[core_id +: 1])
+            .task_in        (task_out[core_id +: 1]),
+
+            .dkl_core_level_entry_data (dkl_core_level_entry_data[core_id]),
+            .dkl_core_level_entry_valid (dkl_core_level_entry_valid[core_id]),
+            .dkl_core_to_socket_arb_ready (dkl_core_to_socket_arb_ready[core_id])
         );
     end
+
+    /* verilator lint_off PINMISSING */
+    VX_stream_arb #(
+        .NUM_INPUTS (`SOCKET_SIZE),
+        .NUM_OUTPUTS (1),
+        .DATAW ($bits(kmu_data_t))
+    ) dkl_core_to_socket_arb (
+        .clk (clk),
+        .reset (reset),
+        .valid_in (dkl_core_level_entry_valid),
+        .data_in (dkl_core_level_entry_data),
+        .ready_in (dkl_core_to_socket_arb_ready),
+        .valid_out (dkl_socket_level_entry_valid),
+        .data_out (dkl_socket_level_entry_data),
+        .ready_out (dkl_socket_to_cluster_arb_ready)
+    );
+    /* verilator lint_on PINMISSING */
 
     `BUFFER_EX(busy, (| per_core_busy), 1'b1, 1, (`SOCKET_SIZE > 1));
 

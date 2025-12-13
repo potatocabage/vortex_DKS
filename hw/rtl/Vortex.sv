@@ -43,22 +43,114 @@ module Vortex import VX_gpu_pkg::*; (
     // Status
     output wire                             busy
 );
-
+/* verilator lint_off UNDRIVEN */
 wire start;
+/* verilator lint_on UNDRIVEN */
+
+wire host_dcr_out_valid;
+kmu_data_t host_dcr_kmu_data;
+wire dkl_main_level_entry_valid;
+kmu_data_t dkl_main_level_entry_data;
+wire [1:0] host_vs_dkl_arb_ready;
+wire host_vs_dkl_entry_valid;
+
+wire hwq_in_ready;
+kmu_data_t hwq_in_data;
+kmu_data_t hwq_out_data;
+wire hwq_out_valid;
+wire hwq_out_ready;
+
 `UNUSED_VAR(start);
 
 VX_kmu_bus_if kmu_bus_in[1]();
 VX_kmu_bus_if kmu_bus_out[`NUM_CLUSTERS]();
 
-VX_kmu kmu(
+// VX_kernel_queue #(
+//     .QUEUE_DEPTH(8)
+// ) kernel_queue (
+//     .clk(clk),
+//     .reset(reset),
+//     .dcr_wr_valid(dcr_wr_valid),      // From host
+//     .dcr_wr_addr(dcr_wr_addr),
+//     .dcr_wr_data(dcr_wr_data),
+//     .kmu_dcr_wr_valid(kmu_dcr_wr_valid),  // To KMU
+//     .kmu_dcr_wr_addr(kmu_dcr_wr_addr),
+//     .kmu_dcr_wr_data(kmu_dcr_wr_data),
+//     .kernel_done(all_cores_idle),     // Detect completion
+//     .queue_full(queue_full),
+//     .queue_empty(queue_empty)
+// );
+
+
+VX_kmu_refactored_dcr_host_buffer #()
+kmu_dcr_host_buffer (
     .clk (clk),
     .reset (reset),
     .dcr_wr_valid (dcr_wr_valid),
     .dcr_wr_addr (dcr_wr_addr),
     .dcr_wr_data (dcr_wr_data),
-    .start (start),
-    .kmu_bus_out (kmu_bus_in) // <-- add this line
+    .dcr_kmu_data (host_dcr_kmu_data),
+    .hwq_in_ready (host_vs_dkl_arb_ready[0]),
+    .dcr_out_valid (host_dcr_out_valid)
 );
+
+// TODO: join this with the other buffer
+/* verilator lint_off PINMISSING */
+VX_stream_arb #(
+    .NUM_INPUTS (2),
+    .NUM_OUTPUTS (1),
+    .DATAW ($bits(kmu_data_t))
+) host_vs_dkl_arb (
+    .clk (clk),
+    .reset (reset),
+    // .valid_in ({host_dcr_out_valid, dkl_main_level_entry_valid}),
+    .valid_in ({dkl_main_level_entry_valid, host_dcr_out_valid}),
+    // .data_in ({host_dcr_kmu_data, dkl_main_level_entry_data}),
+    .data_in ({dkl_main_level_entry_data, host_dcr_kmu_data}),
+    .ready_in (host_vs_dkl_arb_ready),
+    .valid_out (host_vs_dkl_entry_valid),
+    .data_out (hwq_in_data),
+    .ready_out (hwq_in_ready)
+);
+/* verilator lint_on PINMISSING */
+
+VX_elastic_buffer #(
+    .DATAW ($bits(kmu_data_t)),
+    .SIZE  (8),
+    .OUT_REG (1),
+    .LUTRAM (0)
+) elastic_buffer (
+    .clk (clk),
+    .reset (reset),
+    .valid_in (host_vs_dkl_entry_valid),
+    .ready_in (hwq_in_ready),
+    .data_in (hwq_in_data),
+    .valid_out (hwq_out_valid),
+    .data_out (hwq_out_data),
+    .ready_out (hwq_out_ready)
+);
+
+/* verilator lint_off PINMISSING */
+VX_kmu_refactored_dcr_kd #()
+kmu_dcr_kd (
+    .clk (clk),
+    .reset (reset),
+    .hwq_data (hwq_out_data),
+    .hwq_data_valid (hwq_out_valid),
+    .kmu_kd_ready (hwq_out_ready),
+    .kmu_bus_out (kmu_bus_in)
+);
+/* verilator lint_on PINMISSING */
+
+// VX_kmu kmu(
+//     .clk (clk),
+//     .reset (reset),
+//     .dcr_wr_valid (dcr_wr_valid),
+//     .dcr_wr_addr (dcr_wr_addr),
+//     .dcr_wr_data (dcr_wr_data),
+//     .start (start),
+//     .kmu_bus_out (kmu_bus_in) // <-- add this line
+// );
 
 `ifdef SCOPE
     localparam scope_cluster = 0;
@@ -144,6 +236,9 @@ VX_kmu kmu(
     assign dcr_bus_if.write_data  = dcr_wr_data;
 
     wire [`NUM_CLUSTERS-1:0] per_cluster_busy;
+    wire [`NUM_CLUSTERS-1:0] dkl_cluster_level_entry_valid;
+    wire [`NUM_CLUSTERS-1:0] dkl_cluster_to_main_arb_ready;
+    kmu_data_t [`NUM_CLUSTERS-1:0] dkl_cluster_level_entry_data;
 
     VX_kmu_arb #(
         .NUM_INPUTS (1),
@@ -181,9 +276,29 @@ VX_kmu kmu(
             .mem_bus_if         (per_cluster_mem_bus_if[cluster_id * `L2_MEM_PORTS +: `L2_MEM_PORTS]),
 
             .busy               (per_cluster_busy[cluster_id]),
-            .task_in            (kmu_bus_out[cluster_id +: 1])
+            .task_in            (kmu_bus_out[cluster_id +: 1]),
+            .dkl_cluster_level_entry_data (dkl_cluster_level_entry_data[cluster_id]),
+            .dkl_cluster_level_entry_valid (dkl_cluster_level_entry_valid[cluster_id]),
+            .dkl_cluster_to_main_arb_ready (dkl_cluster_to_main_arb_ready[cluster_id])
         );
     end
+
+    /* verilator lint_off PINMISSING */
+    VX_stream_arb #(
+        .NUM_INPUTS (`NUM_CLUSTERS),
+        .NUM_OUTPUTS (1),
+        .DATAW ($bits(kmu_data_t))
+    ) dkl_cluster_to_main_arb (
+        .clk (clk),
+        .reset (reset),
+        .valid_in (dkl_cluster_level_entry_valid),
+        .data_in (dkl_cluster_level_entry_data),
+        .ready_in (dkl_cluster_to_main_arb_ready),
+        .valid_out (dkl_main_level_entry_valid),
+        .data_out (dkl_main_level_entry_data),
+        .ready_out (host_vs_dkl_arb_ready[1])
+    );
+    /* verilator lint_on PINMISSING */
 
     `BUFFER_EX(busy, (| per_cluster_busy), 1'b1, 1, (`NUM_CLUSTERS > 1));
 
@@ -260,5 +375,15 @@ VX_kmu kmu(
         $fflush(); // flush stdout buffer
     end
 `endif
+
+always @(posedge clk) begin
+    `TRACE(1, ("%t: VORTEX_MAIN: host_vs_dkl_arb_ready: %b, dkl_main_level_entry_valid: %b, host_dcr_out_valid: %b\n", $time, host_vs_dkl_arb_ready, dkl_main_level_entry_valid, host_dcr_out_valid))
+    `TRACE(1, ("%t: VORTEX_MAIN: host_vs_dkl_in_valid=%b, hwq_in_ready=%b, hwq_out_valid=%b, hwq_out_ready=%b\n", $time, host_vs_dkl_entry_valid, hwq_in_ready, hwq_out_valid, hwq_out_ready))
+    `TRACE(1, ("%t: VORTEX_MAIN: dkl_main_level_entry_data=%h, host_dcr_kmu_data=%h\n", $time,dkl_main_level_entry_data, host_dcr_kmu_data))
+    `TRACE(1, ("%t: VORTEX_MAIN: hwq_in_data=%h, hwq_out_data=%h\n", $time, hwq_in_data, hwq_out_data))
+    
+    
+    
+end
 
 endmodule

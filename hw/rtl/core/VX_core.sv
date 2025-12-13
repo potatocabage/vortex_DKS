@@ -45,7 +45,11 @@ module VX_core import VX_gpu_pkg::*; #(
     output wire             busy,
 
     // Distributed task
-    VX_kmu_bus_if.slave      task_in[1]
+    VX_kmu_bus_if.slave      task_in[1],
+
+    output kmu_data_t       dkl_core_level_entry_data,
+    output wire             dkl_core_level_entry_valid,
+    input wire              dkl_core_to_socket_arb_ready
 );
     VX_schedule_if      schedule_if();
     VX_fetch_if         fetch_if();
@@ -189,7 +193,10 @@ module VX_core import VX_gpu_pkg::*; #(
 
         .warp_ctl_if    (warp_ctl_if),
         .branch_ctl_if  (branch_ctl_if),
-        .cta_csr_if     (cta_csr_if)
+        .cta_csr_if     (cta_csr_if),
+        .dkl_core_level_entry_data (dkl_core_level_entry_data),
+        .dkl_core_level_entry_valid (dkl_core_level_entry_valid),
+        .dkl_core_to_socket_arb_ready (dkl_core_to_socket_arb_ready)
     );
 
     VX_commit #(
